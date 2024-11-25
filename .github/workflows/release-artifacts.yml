@@ -53,6 +53,8 @@ jobs:
           target: ${{ matrix.target }}
           token: ${{ secrets.GITHUB_TOKEN }}
           features: multiling-chinese,multiling-japanese,multiling-korean
+          # 如果是手动触发，使用输入的tag，否则使用github.ref
+          tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
   build-mac-binaries:
     strategy:
@@ -80,3 +82,5 @@ jobs:
           target: ${{ matrix.target }}
           features: multiling-chinese,multiling-japanese,multiling-korean
           token: ${{ secrets.GITHUB_TOKEN }}
+          # 如果是手动触发，使用输入的tag，否则使用github.ref
+          tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
