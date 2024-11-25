@@ -3,13 +3,7 @@ permissions:
   contents: write
 on:
   release:
-    types: [created, published]  # 同时支持创建和发布时触发
-  workflow_dispatch:  # 添加手动触发支持
-    inputs:
-      tag:
-        description: 'Tag to build release for'
-        required: true
-        type: string
+    types: [published]  # 同时支持创建和发布时触发
 
 jobs:
   build-linux-binaries:
