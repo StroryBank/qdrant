@@ -395,7 +395,7 @@ impl ShardHolder {
                 debug_assert!(
                     state
                         .as_ref()
-                        .map_or(false, |state| state.matches(&resharding_key)),
+                        .is_some_and(|state| state.matches(&resharding_key)),
                     "resharding {resharding_key} is not in progress:\n{state:#?}"
                 );
 
@@ -490,11 +490,10 @@ impl ShardHolder {
             return OperationsByMode::from(operation);
         };
 
-        let point_ids = operation.point_ids();
-
-        if point_ids.is_empty() {
-            return OperationsByMode::from(operation);
-        }
+        let point_ids = match operation.point_ids() {
+            Some(ids) if !ids.is_empty() => ids,
+            Some(_) | None => return OperationsByMode::from(operation),
+        };
 
         let target_point_ids: HashSet<_> = point_ids
             .iter()

@@ -1,8 +1,7 @@
-#[allow(unused)]
-mod metrics;
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
     use quantization::encoded_vectors::{DistanceType, EncodedVectors, VectorParameters};
     use quantization::encoded_vectors_u8::EncodedVectorsU8;
     use quantization::EncodedVectorsPQ;
@@ -27,7 +26,7 @@ mod tests {
             Vec::<u8>::new(),
             &vector_parameters,
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -65,7 +64,7 @@ mod tests {
             &vector_parameters,
             2,
             1,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 

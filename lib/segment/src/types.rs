@@ -153,10 +153,7 @@ impl<'de> serde::Deserialize<'de> for ExtendedPointId {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = match serde_value::Value::deserialize(deserializer) {
-            Ok(val) => val,
-            Err(err) => return Err(err),
-        };
+        let value = serde_value::Value::deserialize(deserializer)?;
 
         if let Ok(num) = value.clone().deserialize_into() {
             return Ok(ExtendedPointId::NumId(num));
@@ -330,6 +327,8 @@ pub struct SegmentInfo {
     /// An ESTIMATION of effective amount of bytes used for vectors
     /// Do NOT rely on this number unless you know what you are doing
     pub vectors_size_bytes: usize,
+    /// An estimation of the effective amount of bytes used for payloads
+    pub payloads_size_bytes: usize,
     pub ram_usage_bytes: usize,
     pub disk_usage_bytes: usize,
     pub is_appendable: bool,
@@ -704,6 +703,22 @@ pub struct StrictModeConfig {
     /// Max oversampling value allowed in search.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_max_oversampling: Option<f64>,
+
+    /// Max batchsize when upserting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upsert_max_batchsize: Option<usize>,
+
+    /// Max size of a collections vector storage in bytes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_collection_vector_size_bytes: Option<usize>,
+
+    /// Max number of read operations per second per shard per peer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_rate_limit_per_sec: Option<usize>,
+
+    /// Max number of write operations per second per shard per peer
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_rate_limit_per_sec: Option<usize>,
 }
 
 impl Eq for StrictModeConfig {}
@@ -720,6 +735,10 @@ impl Hash for StrictModeConfig {
             search_allow_exact,
             // We skip hashing this field because we cannot reliably hash a float
             search_max_oversampling: _,
+            upsert_max_batchsize,
+            max_collection_vector_size_bytes,
+            read_rate_limit_per_sec,
+            write_rate_limit_per_sec,
         } = self;
         (
             enabled,
@@ -729,6 +748,10 @@ impl Hash for StrictModeConfig {
             unindexed_filtering_update,
             search_max_hnsw_ef,
             search_allow_exact,
+            upsert_max_batchsize,
+            max_collection_vector_size_bytes,
+            read_rate_limit_per_sec,
+            write_rate_limit_per_sec,
         )
             .hash(state);
     }
@@ -947,12 +970,33 @@ impl VectorDataConfig {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SparseVectorStorageType {
+    /// Storage on disk
+    // (rocksdb storage)
+    #[default]
+    OnDisk,
+    /// Storage in memory maps
+    // (blob_store storage)
+    Mmap,
+}
+
 /// Config of single sparse vector data storage
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, Validate)]
 #[serde(rename_all = "snake_case")]
 pub struct SparseVectorDataConfig {
     /// Sparse inverted index config
     pub index: SparseIndexConfig,
+
+    /// Type of storage this sparse vector uses
+    #[serde(default = "default_sparse_vector_storage_type_when_not_in_config")]
+    pub storage_type: SparseVectorStorageType,
+}
+
+/// If the storage type is not in config, it means it is the OnDisk variant
+const fn default_sparse_vector_storage_type_when_not_in_config() -> SparseVectorStorageType {
+    SparseVectorStorageType::OnDisk
 }
 
 impl SparseVectorDataConfig {
@@ -1094,7 +1138,7 @@ impl PayloadContainer for Payload {
     }
 }
 
-impl<'a> PayloadContainer for OwnedPayloadRef<'a> {
+impl PayloadContainer for OwnedPayloadRef<'_> {
     fn get_value(&self, path: &JsonPath) -> MultiValue<&Value> {
         path.value_get(self.as_ref())
     }
@@ -1136,7 +1180,7 @@ pub enum OwnedPayloadRef<'a> {
     Owned(Rc<Map<String, Value>>),
 }
 
-impl<'a> Deref for OwnedPayloadRef<'a> {
+impl Deref for OwnedPayloadRef<'_> {
     type Target = Map<String, Value>;
 
     fn deref(&self) -> &Self::Target {
@@ -1147,7 +1191,7 @@ impl<'a> Deref for OwnedPayloadRef<'a> {
     }
 }
 
-impl<'a> AsRef<Map<String, Value>> for OwnedPayloadRef<'a> {
+impl AsRef<Map<String, Value>> for OwnedPayloadRef<'_> {
     fn as_ref(&self) -> &Map<String, Value> {
         match self {
             OwnedPayloadRef::Ref(reference) => reference,
@@ -1156,13 +1200,13 @@ impl<'a> AsRef<Map<String, Value>> for OwnedPayloadRef<'a> {
     }
 }
 
-impl<'a> From<Payload> for OwnedPayloadRef<'a> {
+impl From<Payload> for OwnedPayloadRef<'_> {
     fn from(payload: Payload) -> Self {
         OwnedPayloadRef::Owned(Rc::new(payload.0))
     }
 }
 
-impl<'a> From<Map<String, Value>> for OwnedPayloadRef<'a> {
+impl From<Map<String, Value>> for OwnedPayloadRef<'_> {
     fn from(payload: Map<String, Value>) -> Self {
         OwnedPayloadRef::Owned(Rc::new(payload))
     }
@@ -2057,6 +2101,14 @@ impl From<HashSet<PointIdType>> for HasIdCondition {
     }
 }
 
+impl FromIterator<PointIdType> for HasIdCondition {
+    fn from_iter<T: IntoIterator<Item = PointIdType>>(iter: T) -> Self {
+        HasIdCondition {
+            has_id: iter.into_iter().collect(),
+        }
+    }
+}
+
 /// Select points with payload for a specified nested field
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Validate)]
 pub struct Nested {
@@ -2094,6 +2146,9 @@ impl NestedCondition {
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged)]
+#[serde(
+    expecting = "Expected some form of condition, which can be a field condition (like {\"key\": ..., \"match\": ... }), or some other mentioned in the documentation: https://qdrant.tech/documentation/concepts/filtering/#filtering-conditions"
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum Condition {
     /// Check if field satisfies provided condition
@@ -2163,6 +2218,9 @@ pub trait CustomIdCheckerCondition: fmt::Debug {
 /// Options for specifying which payload to include or not
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq)]
 #[serde(untagged, rename_all = "snake_case")]
+#[serde(
+    expecting = "Expected a boolean, an array of strings, or an object with an include/exclude field"
+)]
 pub enum WithPayloadInterface {
     /// If `true` - return all payload,
     /// If `false` - do not return payload
@@ -2188,6 +2246,7 @@ impl Default for WithPayloadInterface {
 /// Options for specifying which vector to include
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone, PartialEq, Eq)]
 #[serde(untagged, rename_all = "snake_case")]
+#[serde(expecting = "Expected a boolean, or an array of strings")]
 pub enum WithVector {
     /// If `true` - return all vector,
     /// If `false` - do not return vector

@@ -1,8 +1,7 @@
-#[allow(unused)]
-mod metrics;
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
     use common::counter::hardware_counter::HardwareCounterCell;
     use quantization::encoded_vectors::{DistanceType, EncodedVectors, VectorParameters};
     use quantization::encoded_vectors_u8::EncodedVectorsU8;
@@ -35,7 +34,7 @@ mod tests {
                 invert: false,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -72,7 +71,7 @@ mod tests {
                 invert: false,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -109,7 +108,7 @@ mod tests {
                 invert: false,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -146,7 +145,7 @@ mod tests {
                 invert: true,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -183,7 +182,7 @@ mod tests {
                 invert: true,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -220,7 +219,7 @@ mod tests {
                 invert: true,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);
@@ -256,7 +255,7 @@ mod tests {
                 invert: false,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -293,7 +292,7 @@ mod tests {
                 invert: true,
             },
             None,
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -330,7 +329,7 @@ mod tests {
                 invert: false,
             },
             Some(1.0 - f32::EPSILON), // almost 1.0 value, but not 1.0
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
         let query_u8 = encoded.encode_query(&query);

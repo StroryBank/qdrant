@@ -238,6 +238,7 @@ pub struct Batch {
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
 #[serde(untagged)]
+#[serde(expecting = "Expected a string or an integer")]
 pub enum ShardKeySelector {
     ShardKey(ShardKey),
     ShardKeys(Vec<ShardKey>),
@@ -339,6 +340,7 @@ pub enum NamedVectorStruct {
 
 #[derive(Deserialize, Serialize, JsonSchema, Clone, Debug, PartialEq)]
 #[serde(untagged)]
+#[serde(expecting = "Expected a string, or an object with a key, direction and/or start_from")]
 pub enum OrderByInterface {
     Key(JsonPath),
     Struct(OrderBy),
@@ -403,6 +405,7 @@ pub struct QueryRequestInternal {
     pub offset: Option<usize>,
 
     /// Options for specifying which vectors to include into the response. Default is false.
+    #[serde(alias = "with_vectors")]
     pub with_vector: Option<WithVector>,
 
     /// Options for specifying which payload to include or not. Default is false.
@@ -435,6 +438,7 @@ pub struct QueryResponse {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
+#[serde(expecting = "Expected some form of vector, id, or a type of query")]
 pub enum QueryInterface {
     Nearest(VectorInput),
     Query(Query),
@@ -1030,5 +1034,19 @@ impl Validate for PointInsertOperations {
             PointInsertOperations::PointsBatch(batch) => batch.validate(),
             PointInsertOperations::PointsList(list) => list.validate(),
         }
+    }
+}
+
+impl PointInsertOperations {
+    /// Amount of vectors in the operation request.
+    pub fn len(&self) -> usize {
+        match self {
+            PointInsertOperations::PointsBatch(batch) => batch.batch.ids.len(),
+            PointInsertOperations::PointsList(list) => list.points.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }

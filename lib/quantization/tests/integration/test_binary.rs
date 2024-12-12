@@ -1,8 +1,7 @@
-#[allow(unused)]
-mod metrics;
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
     use common::counter::hardware_counter::HardwareCounterCell;
     use quantization::encoded_vectors::{DistanceType, EncodedVectors, VectorParameters};
     use quantization::encoded_vectors_binary::{BitsStoreType, EncodedVectorsBin};
@@ -55,7 +54,7 @@ mod tests {
                 distance_type: DistanceType::Dot,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -103,7 +102,7 @@ mod tests {
                 distance_type: DistanceType::Dot,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -151,7 +150,7 @@ mod tests {
                 distance_type: DistanceType::Dot,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -196,7 +195,7 @@ mod tests {
                 distance_type: DistanceType::Dot,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -240,7 +239,7 @@ mod tests {
                 distance_type: DistanceType::L1,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -303,7 +302,7 @@ mod tests {
                 distance_type: DistanceType::L1,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -366,7 +365,7 @@ mod tests {
                 distance_type: DistanceType::L1,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -426,7 +425,7 @@ mod tests {
                 distance_type: DistanceType::L1,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -486,7 +485,7 @@ mod tests {
                 distance_type: DistanceType::L2,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -549,7 +548,7 @@ mod tests {
                 distance_type: DistanceType::L2,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -612,7 +611,7 @@ mod tests {
                 distance_type: DistanceType::L2,
                 invert: false,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 
@@ -672,7 +671,7 @@ mod tests {
                 distance_type: DistanceType::L2,
                 invert: true,
             },
-            || false,
+            &AtomicBool::new(false),
         )
         .unwrap();
 

@@ -72,6 +72,7 @@ impl Segment {
     /// # Warning
     ///
     /// Available for appendable segments only.
+    #[allow(clippy::needless_pass_by_ref_mut)] // ensure single access to AtomicRefCell vector_index
     pub(super) fn update_vectors(
         &mut self,
         internal_id: PointOffsetType,
@@ -277,7 +278,7 @@ impl Segment {
                 .id_tracker
                 .borrow()
                 .internal_version(point_offset)
-                .map_or(false, |current_version| current_version > op_num)
+                .is_some_and(|current_version| current_version > op_num)
             {
                 return Ok(false);
             }

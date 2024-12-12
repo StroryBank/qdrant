@@ -23,6 +23,7 @@ use super::resharding::tasks_pool::ReshardTasksPool;
 use super::resharding::{ReshardStage, ReshardState};
 use super::transfer::transfer_tasks_pool::TransferTasksPool;
 use crate::collection::payload_index_schema::PayloadIndexSchema;
+use crate::common::local_data_stats::LocalDataStats;
 use crate::common::snapshot_stream::SnapshotStream;
 use crate::config::{CollectionConfigInternal, ShardingMethod};
 use crate::hash_ring::HashRingRouter;
@@ -495,7 +496,7 @@ impl ShardHolder {
     pub fn select_shards<'a>(
         &'a self,
         shard_selector: &'a ShardSelectorInternal,
-    ) -> CollectionResult<Vec<(&ShardReplicaSet, Option<&ShardKey>)>> {
+    ) -> CollectionResult<Vec<(&'a ShardReplicaSet, Option<&'a ShardKey>)>> {
         let mut res = Vec::new();
 
         match shard_selector {
@@ -507,7 +508,7 @@ impl ShardHolder {
                     // Ignore a new resharding shard until it completed point migration
                     // The shard will be marked as active at the end of the migration stage
                     let resharding_migrating_up =
-                        self.resharding_state.read().clone().map_or(false, |state| {
+                        self.resharding_state.read().clone().is_some_and(|state| {
                             state.direction == ReshardingDirection::Up
                                 && state.shard_id == shard_id
                                 && state.stage < ReshardStage::ReadHashRingCommitted
@@ -603,11 +604,14 @@ impl ShardHolder {
 
         // ToDo: remove after version 0.11.0
         for shard_id in shard_ids_list {
+            let shard_key = self.get_shard_id_to_key_mapping().get(&shard_id).cloned();
+
             for (path, _shard_version, shard_type) in
                 latest_shard_paths(collection_path, shard_id).await.unwrap()
             {
                 let replica_set = ShardReplicaSet::load(
                     shard_id,
+                    shard_key.clone(),
                     collection_id.clone(),
                     &path,
                     collection_config.clone(),
@@ -1113,6 +1117,15 @@ impl ShardHolder {
             replica_set.remove_peer(peer_id).await?;
         }
         Ok(())
+    }
+
+    /// Queries and accumulates the statistics for local data, uncached.
+    pub async fn calculate_local_segments_stats(&self) -> LocalDataStats {
+        let mut stats = LocalDataStats::default();
+        for shard in self.shards.iter() {
+            stats.accumulate_from(&shard.1.calculate_local_shards_stats().await)
+        }
+        stats
     }
 }
 

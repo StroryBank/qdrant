@@ -49,14 +49,22 @@ impl ShardReplicaSet {
                 }
                 // In recovery state, only allow operations with force flag
                 Some(ReplicaState::PartialSnapshot | ReplicaState::Recovery)
-                    if operation.clock_tag.map_or(false, |tag| tag.force) =>
+                    if operation.clock_tag.is_some_and(|tag| tag.force) =>
                 {
                     Ok(Some(local_shard.get().update(operation, wait).await?))
                 }
-                Some(
-                    ReplicaState::PartialSnapshot | ReplicaState::Recovery | ReplicaState::Dead,
-                )
-                | None => Ok(None),
+                // In recovery state, log rejected operations without clock tag
+                Some(ReplicaState::PartialSnapshot | ReplicaState::Recovery) => {
+                    if log::log_enabled!(log::Level::Debug) {
+                        if let Some(ids) = operation.operation.point_ids() {
+                            log::debug!("Operation affecting point IDs {ids:?} rejected on this peer, force flag required in recovery state");
+                        } else {
+                            log::debug!("Operation {operation:?} rejected on this peer, force flag required in recovery state");
+                        }
+                    }
+                    Ok(None)
+                }
+                Some(ReplicaState::Dead) | None => Ok(None),
             }
         } else {
             Ok(None)
@@ -171,11 +179,18 @@ impl ShardReplicaSet {
 
             // Log a warning, if operation was rejected... but only if operation had a non-0 tick,
             // because operations with tick 0 should *always* be rejected and rejection is *expected*.
-            if is_non_zero_tick {
-                log::warn!(
-                    "Operation {operation:?} was rejected by some node(s), retrying... \
-                     (attempt {attempt}/{UPDATE_MAX_CLOCK_REJECTED_RETRIES})"
-                );
+            if is_non_zero_tick && log::log_enabled!(log::Level::Warn) {
+                if let Some(ids) = operation.point_ids() {
+                    log::warn!(
+                        "Operation affecting point IDs {ids:?} was rejected by some node(s), retrying... \
+                         (attempt {attempt}/{UPDATE_MAX_CLOCK_REJECTED_RETRIES})"
+                    );
+                } else {
+                    log::warn!(
+                        "Operation {operation:?} was rejected by some node(s), retrying... \
+                         (attempt {attempt}/{UPDATE_MAX_CLOCK_REJECTED_RETRIES})"
+                    );
+                }
             }
         }
 
@@ -340,12 +355,38 @@ impl ShardReplicaSet {
         };
 
         if !failures.is_empty() {
+            for (peer_id, err) in &failures {
+                log::warn!(
+                    "Failed to update shard {}:{} on peer {peer_id}, error: {err}",
+                    self.collection_id,
+                    self.shard_id,
+                );
+            }
+
+            // If there is at least one full-complete operation, we can't ignore non-transient errors (4xx)
+            // And we must deactivate failed replicas to ensure consistency
+            let has_full_completed_updates = successes.iter().any(|(_, res)| match res.status {
+                UpdateStatus::Completed => true,
+                UpdateStatus::Acknowledged => false,
+                UpdateStatus::ClockRejected => false,
+            });
+
             if successes.len() >= minimal_success_count {
                 // If there are enough successes, deactivate failed replicas
                 // Failed replicas will automatically recover from another replica ensuring consistency
 
+                let failures_to_handle: Vec<_> = if !has_full_completed_updates {
+                    // We can only deactivate transient errors
+                    failures
+                        .into_iter()
+                        .filter(|(_, err)| err.is_transient())
+                        .collect()
+                } else {
+                    failures
+                };
+
                 let wait_for_deactivation = self.handle_failed_replicas(
-                    &failures,
+                    &failures_to_handle,
                     &self.replica_state.read(),
                     update_only_existing,
                 );
@@ -356,17 +397,17 @@ impl ShardReplicaSet {
                     let timeout = DEFAULT_SHARD_DEACTIVATION_TIMEOUT;
 
                     let replica_state = self.replica_state.clone();
-                    let peer_ids: Vec<_> = failures.iter().map(|(peer_id, _)| *peer_id).collect();
+                    let peer_ids: Vec<_> = failures_to_handle
+                        .iter()
+                        .map(|(peer_id, _)| *peer_id)
+                        .collect();
 
                     let shards_disabled = tokio::task::spawn_blocking(move || {
                         replica_state.wait_for(
                             |state| {
                                 peer_ids.iter().all(|peer_id| {
-                                    state
-                                        .peers
-                                        .get(peer_id)
-                                        // Not found means that peer is dead
-                                        .map_or(true, |state| state != &ReplicaState::Active)
+                                    // Not found means that peer is dead
+                                    state.peers.get(peer_id) != Some(&ReplicaState::Active)
                                 })
                             },
                             timeout,
@@ -458,12 +499,6 @@ impl ShardReplicaSet {
         let mut wait_for_deactivation = false;
 
         for (peer_id, err) in failures {
-            log::warn!(
-                "Failed to update shard {}:{} on peer {peer_id}, error: {err}",
-                self.collection_id,
-                self.shard_id,
-            );
-
             let Some(peer_state) = state.get_peer_state(*peer_id) else {
                 continue;
             };
@@ -627,6 +662,7 @@ mod tests {
         let remotes = HashSet::from([2, 3, 4, 5]);
         ShardReplicaSet::build(
             1,
+            None,
             "test_collection".to_string(),
             1,
             false,

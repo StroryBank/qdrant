@@ -28,8 +28,9 @@ use segment::data_types::vectors::{
 };
 use segment::types::{
     Distance, Filter, HnswConfig, MultiVectorConfig, Payload, PayloadIndexInfo, PayloadKeyType,
-    PointIdType, QuantizationConfig, SearchParams, SeqNumberType, ShardKey, StrictModeConfig,
-    VectorStorageDatatype, WithPayloadInterface, WithVector,
+    PointIdType, QuantizationConfig, SearchParams, SeqNumberType, ShardKey,
+    SparseVectorStorageType, StrictModeConfig, VectorStorageDatatype, WithPayloadInterface,
+    WithVector,
 };
 use semver::Version;
 use serde;
@@ -1015,6 +1016,8 @@ pub enum CollectionError {
     StrictMode { description: String },
     #[error("{description}")]
     InferenceError { description: String },
+    #[error("Rate limiting exceeded: {description}")]
+    RateLimitExceeded { description: String },
 }
 
 impl CollectionError {
@@ -1115,6 +1118,7 @@ impl CollectionError {
             Self::ObjectStoreError { .. } => false,
             Self::StrictMode { .. } => false,
             Self::InferenceError { .. } => false,
+            Self::RateLimitExceeded { .. } => false,
         }
     }
 
@@ -1497,6 +1501,16 @@ pub struct SparseVectorParams {
     pub modifier: Option<Modifier>,
 }
 
+impl SparseVectorParams {
+    pub fn storage_type(&self, use_new_storage: bool) -> SparseVectorStorageType {
+        if use_new_storage {
+            SparseVectorStorageType::Mmap
+        } else {
+            SparseVectorStorageType::default()
+        }
+    }
+}
+
 impl Anonymize for SparseVectorParams {
     fn anonymize(&self) -> Self {
         Self {
@@ -1612,7 +1626,7 @@ impl VectorsConfig {
     /// Iterate over the named vector parameters.
     ///
     /// If this is `Single` it iterates over a single parameter named [`DEFAULT_VECTOR_NAME`].
-    pub fn params_iter<'a>(&'a self) -> Box<dyn Iterator<Item = (&str, &VectorParams)> + 'a> {
+    pub fn params_iter<'a>(&'a self) -> Box<dyn Iterator<Item = (&'a str, &'a VectorParams)> + 'a> {
         match self {
             VectorsConfig::Single(p) => Box::new(std::iter::once((DEFAULT_VECTOR_NAME, p))),
             VectorsConfig::Multi(p) => Box::new(p.iter().map(|(n, p)| (n.as_str(), p))),

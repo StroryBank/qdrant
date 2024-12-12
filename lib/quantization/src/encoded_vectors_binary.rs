@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use common::counter::hardware_counter::HardwareCounterCell;
 use serde::{Deserialize, Serialize};
@@ -169,12 +170,12 @@ impl<TBitsStoreType: BitsStoreType, TStorage: EncodedStorage>
         orig_data: impl Iterator<Item = impl AsRef<[f32]> + 'a> + Clone,
         mut storage_builder: impl EncodedStorageBuilder<TStorage>,
         vector_parameters: &VectorParameters,
-        stop_condition: impl Fn() -> bool,
+        stopped: &AtomicBool,
     ) -> Result<Self, EncodingError> {
         debug_assert!(validate_vector_parameters(orig_data.clone(), vector_parameters).is_ok());
 
         for vector in orig_data {
-            if stop_condition() {
+            if stopped.load(Ordering::Relaxed) {
                 return Err(EncodingError::Stopped);
             }
 
@@ -253,6 +254,19 @@ impl<TBitsStoreType: BitsStoreType, TStorage: EncodedStorage>
             (DistanceType::L1 | DistanceType::L2, true) => zeros_count - xor_product,
             (DistanceType::L1 | DistanceType::L2, false) => xor_product - zeros_count,
         }
+    }
+
+    pub fn get_quantized_vector(&self, i: u32) -> &[u8] {
+        self.encoded_vectors
+            .get_vector_data(i as _, self.get_quantized_vector_size())
+    }
+
+    pub fn get_vector_parameters(&self) -> &VectorParameters {
+        &self.metadata.vector_parameters
+    }
+
+    pub fn vectors_count(&self) -> usize {
+        self.metadata.vector_parameters.count
     }
 }
 

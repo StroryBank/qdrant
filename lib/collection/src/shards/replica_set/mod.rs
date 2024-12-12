@@ -15,7 +15,7 @@ use std::time::Duration;
 use common::cpu::CpuBudget;
 use common::types::TelemetryDetail;
 use schemars::JsonSchema;
-use segment::types::{ExtendedPointId, Filter};
+use segment::types::{ExtendedPointId, Filter, ShardKey};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
 use tokio::sync::{Mutex, RwLock};
@@ -26,6 +26,7 @@ use super::remote_shard::RemoteShard;
 use super::transfer::ShardTransfer;
 use super::CollectionId;
 use crate::collection::payload_index_schema::PayloadIndexSchema;
+use crate::common::local_data_stats::LocalDataStats;
 use crate::common::snapshots_manager::SnapshotStorageManager;
 use crate::config::CollectionConfigInternal;
 use crate::operations::point_ops::{self};
@@ -94,6 +95,7 @@ pub struct ShardReplicaSet {
     locally_disabled_peers: parking_lot::RwLock<locally_disabled_peers::Registry>,
     pub(crate) shard_path: PathBuf,
     pub(crate) shard_id: ShardId,
+    shard_key: Option<ShardKey>,
     notify_peer_failure_cb: ChangePeerFromState,
     abort_shard_transfer_cb: AbortShardTransfer,
     channel_service: ChannelService,
@@ -122,6 +124,7 @@ impl ShardReplicaSet {
     #[allow(clippy::too_many_arguments)]
     pub async fn build(
         shard_id: ShardId,
+        shard_key: Option<ShardKey>,
         collection_id: CollectionId,
         this_peer_id: PeerId,
         local: bool,
@@ -187,6 +190,7 @@ impl ShardReplicaSet {
 
         Ok(Self {
             shard_id,
+            shard_key,
             local: RwLock::new(local),
             remotes: RwLock::new(remote_shards),
             replica_state: replica_state.into(),
@@ -216,6 +220,7 @@ impl ShardReplicaSet {
     #[allow(clippy::too_many_arguments)]
     pub async fn load(
         shard_id: ShardId,
+        shard_key: Option<ShardKey>,
         collection_id: CollectionId,
         shard_path: &Path,
         collection_config: Arc<RwLock<CollectionConfigInternal>>,
@@ -304,6 +309,7 @@ impl ShardReplicaSet {
 
         let replica_set = Self {
             shard_id,
+            shard_key,
             local: RwLock::new(local),
             remotes: RwLock::new(remote_shards),
             replica_state: replica_state.into(),
@@ -724,7 +730,15 @@ impl ShardReplicaSet {
         }
     }
 
-    /// Check if the are any locally disabled peers
+    pub(crate) async fn on_strict_mode_config_update(&self) -> CollectionResult<()> {
+        let read_local = self.local.read().await;
+        if let Some(shard) = &*read_local {
+            shard.on_strict_mode_config_update().await
+        }
+        Ok(())
+    }
+
+    /// Check if there are any locally disabled peers
     /// And if so, report them to the consensus
     pub fn sync_local_state<F>(&self, get_shard_transfers: F) -> CollectionResult<()>
     where
@@ -764,6 +778,7 @@ impl ShardReplicaSet {
 
         ReplicaSetTelemetry {
             id: self.shard_id,
+            key: self.shard_key.clone(),
             local: local_telemetry,
             remote: self
                 .remotes
@@ -1003,6 +1018,35 @@ impl ShardReplicaSet {
         };
         shard.trigger_optimizers();
         true
+    }
+
+    /// Returns the estimated size of all locally stored vectors in bytes.
+    /// Locks and iterates over all segments.
+    /// Cache this value in performance critical scenarios!
+    pub(crate) async fn calculate_local_shards_stats(&self) -> LocalDataStats {
+        self.local
+            .read()
+            .await
+            .as_ref()
+            .map(|i| match i {
+                Shard::Local(local) => {
+                    let mut total_vector_size = 0;
+
+                    for segment in local.segments.read().iter() {
+                        let size_info = segment.1.get().read().size_info();
+                        total_vector_size += size_info.vectors_size_bytes;
+                    }
+
+                    LocalDataStats {
+                        vector_storage_size: total_vector_size,
+                    }
+                }
+                Shard::Proxy(_)
+                | Shard::ForwardProxy(_)
+                | Shard::QueueProxy(_)
+                | Shard::Dummy(_) => LocalDataStats::default(),
+            })
+            .unwrap_or_default()
     }
 }
 

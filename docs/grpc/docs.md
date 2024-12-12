@@ -1081,7 +1081,7 @@ It is recommended to select the default number of segments as a factor of the nu
 | max_segment_size | [uint64](#uint64) | optional | Do not create segments larger this size (in kilobytes). Large segments might require disproportionately long indexation times, therefore it makes sense to limit the size of segments.
 
 If indexing speed is more important - make this parameter lower. If search speed is more important - make this parameter higher. Note: 1Kb = 1 vector of size 256 If not set, will be automatically selected considering the number of available CPUs. |
-| memmap_threshold | [uint64](#uint64) | optional | Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmaped file.
+| memmap_threshold | [uint64](#uint64) | optional | Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmapped file.
 
 Memmap storage is disabled by default, to enable it, set this threshold to a reasonable value.
 
@@ -1430,6 +1430,10 @@ Note: 1kB = 1 vector of size 256. |
 | search_max_hnsw_ef | [uint32](#uint32) | optional |  |
 | search_allow_exact | [bool](#bool) | optional |  |
 | search_max_oversampling | [float](#float) | optional |  |
+| upsert_max_batchsize | [uint64](#uint64) | optional |  |
+| max_collection_vector_size_bytes | [uint64](#uint64) | optional |  |
+| read_rate_limit_per_sec | [uint32](#uint32) | optional |  |
+| write_rate_limit_per_sec | [uint32](#uint32) | optional |  |
 
 
 

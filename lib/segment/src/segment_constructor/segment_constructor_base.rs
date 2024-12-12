@@ -20,6 +20,7 @@ use crate::data_types::vectors::DEFAULT_VECTOR_NAME;
 use crate::id_tracker::immutable_id_tracker::ImmutableIdTracker;
 use crate::id_tracker::simple_id_tracker::SimpleIdTracker;
 use crate::id_tracker::{IdTracker, IdTrackerEnum, IdTrackerSS};
+use crate::index::hnsw_index::gpu::gpu_devices_manager::LockedGpuDevice;
 use crate::index::hnsw_index::hnsw::{HNSWIndex, HnswIndexOpenArgs};
 use crate::index::plain_payload_index::PlainIndex;
 use crate::index::sparse_index::sparse_index_config::SparseIndexType;
@@ -35,7 +36,7 @@ use crate::payload_storage::simple_payload_storage::SimplePayloadStorage;
 use crate::segment::{Segment, SegmentVersion, VectorData, SEGMENT_STATE_FILE};
 use crate::types::{
     Distance, Indexes, PayloadStorageType, SegmentConfig, SegmentState, SegmentType, SeqNumberType,
-    VectorDataConfig, VectorStorageDatatype, VectorStorageType,
+    SparseVectorStorageType, VectorDataConfig, VectorStorageDatatype, VectorStorageType,
 };
 use crate::vector_storage::dense::appendable_dense_vector_storage::{
     open_appendable_in_ram_vector_storage, open_appendable_in_ram_vector_storage_byte,
@@ -60,7 +61,8 @@ use crate::vector_storage::multi_dense::simple_multi_dense_vector_storage::{
     open_simple_multi_dense_vector_storage_half,
 };
 use crate::vector_storage::quantized::quantized_vectors::QuantizedVectors;
-use crate::vector_storage::simple_sparse_vector_storage::open_simple_sparse_vector_storage;
+use crate::vector_storage::sparse::mmap_sparse_vector_storage::MmapSparseVectorStorage;
+use crate::vector_storage::sparse::simple_sparse_vector_storage::open_simple_sparse_vector_storage;
 use crate::vector_storage::{VectorStorage, VectorStorageEnum};
 
 pub const PAYLOAD_INDEX_PATH: &str = "payload_index";
@@ -312,8 +314,14 @@ pub(crate) fn open_segment_db(
         .chain(
             config
                 .sparse_vector_data
-                .keys()
-                .map(|vector_name| get_vector_name_with_prefix(DB_VECTOR_CF, vector_name)),
+                .iter()
+                .filter(|(_, sparse_vector_config)| {
+                    matches!(
+                        sparse_vector_config.storage_type,
+                        SparseVectorStorageType::OnDisk
+                    )
+                })
+                .map(|(vector_name, _)| get_vector_name_with_prefix(DB_VECTOR_CF, vector_name)),
         )
         .collect();
     open_db(segment_path, &vector_db_names)
@@ -364,6 +372,7 @@ pub(crate) fn create_vector_index(
     payload_index: Arc<AtomicRefCell<StructPayloadIndex>>,
     quantized_vectors: Arc<AtomicRefCell<Option<QuantizedVectors>>>,
     permit: Option<Arc<CpuPermit>>,
+    gpu_device: Option<&LockedGpuDevice>,
     stopped: &AtomicBool,
 ) -> OperationResult<VectorIndexEnum> {
     let vector_index = match &vector_config.index {
@@ -379,6 +388,7 @@ pub(crate) fn create_vector_index(
                 payload_index,
                 hnsw_config: vector_hnsw_config.clone(),
                 permit,
+                gpu_device,
                 stopped,
             };
             if vector_hnsw_config.on_disk == Some(true) {
@@ -451,11 +461,21 @@ pub(crate) fn create_sparse_vector_index(
 
 pub(crate) fn create_sparse_vector_storage(
     database: Arc<RwLock<DB>>,
+    path: &Path,
     vector_name: &str,
+    storage_type: &SparseVectorStorageType,
     stopped: &AtomicBool,
 ) -> OperationResult<VectorStorageEnum> {
-    let db_column_name = get_vector_name_with_prefix(DB_VECTOR_CF, vector_name);
-    open_simple_sparse_vector_storage(database, &db_column_name, stopped)
+    match storage_type {
+        SparseVectorStorageType::OnDisk => {
+            let db_column_name = get_vector_name_with_prefix(DB_VECTOR_CF, vector_name);
+            open_simple_sparse_vector_storage(database, &db_column_name, stopped)
+        }
+        SparseVectorStorageType::Mmap => {
+            let mmap_storage = MmapSparseVectorStorage::open_or_create(path, stopped)?;
+            Ok(VectorStorageEnum::SparseMmap(mmap_storage))
+        }
+    }
 }
 
 fn create_segment(
@@ -492,21 +512,26 @@ fn create_segment(
         let vector_storage_path = get_vector_storage_path(segment_path, vector_name);
 
         // Select suitable vector storage type based on configuration
-        let vector_storage = Arc::new(AtomicRefCell::new(open_vector_storage(
+        let vector_storage = sp(open_vector_storage(
             &database,
             vector_config,
             stopped,
             &vector_storage_path,
             vector_name,
-        )?));
+        )?);
 
         vector_storages.insert(vector_name.to_owned(), vector_storage);
     }
 
-    for vector_name in config.sparse_vector_data.keys() {
+    for (vector_name, sparse_config) in config.sparse_vector_data.iter() {
+        let vector_storage_path = get_vector_storage_path(segment_path, vector_name);
+
+        // Select suitable sparse vector storage type based on configuration
         let vector_storage = sp(create_sparse_vector_storage(
             database.clone(),
+            &vector_storage_path,
             vector_name,
+            &sparse_config.storage_type,
             stopped,
         )?);
 
@@ -558,6 +583,7 @@ fn create_segment(
             vector_storage.clone(),
             payload_index.clone(),
             quantized_vectors.clone(),
+            Default::default(),
             None,
             stopped,
         )?);

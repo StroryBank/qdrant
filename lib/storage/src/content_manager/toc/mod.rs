@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use api::rest::models::HardwareUsage;
 use collection::collection::{Collection, RequestShardTransfer};
 use collection::config::{default_replication_factor, CollectionConfigInternal};
 use collection::operations::types::*;
@@ -257,9 +258,9 @@ impl TableOfContent {
         }))
     }
 
-    pub async fn get_collection<'a>(
+    pub async fn get_collection(
         &self,
-        collection: &CollectionPass<'a>,
+        collection: &CollectionPass<'_>,
     ) -> Result<RwLockReadGuard<Collection>, StorageError> {
         self.get_collection_unchecked(collection.name()).await
     }
@@ -459,19 +460,23 @@ impl TableOfContent {
         result
     }
 
-    /// Cancels all transfers where the source peer is the current peer.
-    pub async fn cancel_outgoing_all_transfers(&self, reason: &str) -> Result<(), StorageError> {
+    /// Cancels all transfers related to the current peer.
+    ///
+    /// Transfers whehre this peer is the source or the target will be cancelled.
+    pub async fn cancel_related_transfers(&self, reason: &str) -> Result<(), StorageError> {
         let collections = self.collections.read().await;
         if let Some(proposal_sender) = &self.consensus_proposal_sender {
             for collection in collections.values() {
-                for transfer in collection.get_outgoing_transfers(self.this_peer_id).await {
+                for transfer in collection.get_related_transfers(self.this_peer_id).await {
                     let cancel_transfer =
                         ConsensusOperations::abort_transfer(collection.name(), transfer, reason);
                     proposal_sender.send(cancel_transfer)?;
                 }
             }
         } else {
-            log::error!("Can't cancel outgoing transfers, this is a single node deployment");
+            log::error!(
+                "Can't cancel transfers related to this node, this is a single node deployment"
+            );
         }
         Ok(())
     }
@@ -640,5 +645,25 @@ impl TableOfContent {
 
     pub fn get_channel_service(&self) -> &ChannelService {
         &self.channel_service
+    }
+
+    /// Gets a copy of hardware metrics for all collections that have been collected from operations on this node.
+    /// This copy is intentional to prevent 'uncontrolled' modifications of the DashMap, which doesn't need to be mutable for modifications.
+    pub fn all_hw_metrics(&self) -> HashMap<String, HardwareUsage> {
+        self.collection_hw_metrics
+            .iter()
+            .map(|i| (i.key().to_string(), HardwareUsage { cpu: i.get_cpu() }))
+            .collect()
+    }
+}
+
+impl Drop for TableOfContent {
+    fn drop(&mut self) {
+        // When dropping `TableOfContent` we also drop the collected hardware measurements which need to be discarded
+        // to prevent panicking in debug mode and tests.
+        #[cfg(any(debug_assertions, test))]
+        for metric in self.collection_hw_metrics.iter_mut() {
+            metric.discard();
+        }
     }
 }

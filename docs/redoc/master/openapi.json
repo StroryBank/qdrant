@@ -7183,7 +7183,7 @@
             "nullable": true
           },
           "memmap_threshold": {
-            "description": "Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmaped file.\n\nMemmap storage is disabled by default, to enable it, set this threshold to a reasonable value.\n\nTo disable memmap storage, set this to `0`. Internally it will use the largest threshold possible.\n\nNote: 1Kb = 1 vector of size 256",
+            "description": "Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmapped file.\n\nMemmap storage is disabled by default, to enable it, set this threshold to a reasonable value.\n\nTo disable memmap storage, set this to `0`. Internally it will use the largest threshold possible.\n\nNote: 1Kb = 1 vector of size 256",
             "default": null,
             "type": "integer",
             "format": "uint",
@@ -7283,6 +7283,34 @@
             "description": "Max oversampling value allowed in search.",
             "type": "number",
             "format": "double",
+            "nullable": true
+          },
+          "upsert_max_batchsize": {
+            "description": "Max batchsize when upserting",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true
+          },
+          "max_collection_vector_size_bytes": {
+            "description": "Max size of a collections vector storage in bytes",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true
+          },
+          "read_rate_limit_per_sec": {
+            "description": "Max number of read operations per second per shard per peer",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true
+          },
+          "write_rate_limit_per_sec": {
+            "description": "Max number of write operations per second per shard per peer",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
             "nullable": true
           }
         }
@@ -9388,7 +9416,7 @@
             "nullable": true
           },
           "memmap_threshold": {
-            "description": "Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmaped file.\n\nMemmap storage is disabled by default, to enable it, set this threshold to a reasonable value.\n\nTo disable memmap storage, set this to `0`.\n\nNote: 1Kb = 1 vector of size 256",
+            "description": "Maximum size (in kilobytes) of vectors to store in-memory per segment. Segments larger than this threshold will be stored as read-only memmapped file.\n\nMemmap storage is disabled by default, to enable it, set this threshold to a reasonable value.\n\nTo disable memmap storage, set this to `0`.\n\nNote: 1Kb = 1 vector of size 256",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
@@ -10841,6 +10869,16 @@
                 "nullable": true
               }
             ]
+          },
+          "hardware": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HardwareTelemetry"
+              },
+              {
+                "nullable": true
+              }
+            ]
           }
         }
       },
@@ -10896,6 +10934,7 @@
         "type": "object",
         "required": [
           "debug",
+          "gpu",
           "recovery_mode",
           "service_debug_feature",
           "web_feature"
@@ -10911,6 +10950,9 @@
             "type": "boolean"
           },
           "recovery_mode": {
+            "type": "boolean"
+          },
+          "gpu": {
             "type": "boolean"
           }
         }
@@ -10963,6 +11005,13 @@
                 "nullable": true
               }
             ]
+          },
+          "gpu_devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GpuDeviceTelemetry"
+            },
+            "nullable": true
           }
         }
       },
@@ -10973,6 +11022,17 @@
           "big",
           "other"
         ]
+      },
+      "GpuDeviceTelemetry": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
       },
       "CollectionsTelemetry": {
         "type": "object",
@@ -11109,6 +11169,16 @@
             "format": "uint32",
             "minimum": 0
           },
+          "key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShardKey"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
           "local": {
             "anyOf": [
               {
@@ -11226,6 +11296,7 @@
           "num_indexed_vectors",
           "num_points",
           "num_vectors",
+          "payloads_size_bytes",
           "ram_usage_bytes",
           "segment_type",
           "vector_data",
@@ -11257,6 +11328,12 @@
           },
           "vectors_size_bytes": {
             "description": "An ESTIMATION of effective amount of bytes used for vectors Do NOT rely on this number unless you know what you are doing",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "payloads_size_bytes": {
+            "description": "An estimation of the effective amount of bytes used for payloads",
             "type": "integer",
             "format": "uint",
             "minimum": 0
@@ -11500,6 +11577,9 @@
         "properties": {
           "index": {
             "$ref": "#/components/schemas/SparseIndexConfig"
+          },
+          "storage_type": {
+            "$ref": "#/components/schemas/SparseVectorStorageType"
           }
         }
       },
@@ -11555,6 +11635,24 @@
             "type": "string",
             "enum": [
               "Mmap"
+            ]
+          }
+        ]
+      },
+      "SparseVectorStorageType": {
+        "oneOf": [
+          {
+            "description": "Storage on disk",
+            "type": "string",
+            "enum": [
+              "on_disk"
+            ]
+          },
+          {
+            "description": "Storage in memory maps",
+            "type": "string",
+            "enum": [
+              "mmap"
             ]
           }
         ]
@@ -12114,6 +12212,34 @@
           },
           "retained_bytes": {
             "description": "Total number of bytes in virtual memory mappings",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      },
+      "HardwareTelemetry": {
+        "type": "object",
+        "required": [
+          "collection_data"
+        ],
+        "properties": {
+          "collection_data": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HardwareUsage"
+            }
+          }
+        }
+      },
+      "HardwareUsage": {
+        "description": "Usage of the hardware resources, spent to process the request",
+        "type": "object",
+        "required": [
+          "cpu"
+        ],
+        "properties": {
+          "cpu": {
             "type": "integer",
             "format": "uint",
             "minimum": 0
@@ -14223,20 +14349,6 @@
             "type": "boolean"
           }
         ]
-      },
-      "HardwareUsage": {
-        "description": "Usage of the hardware resources, spent to process the request",
-        "type": "object",
-        "required": [
-          "cpu"
-        ],
-        "properties": {
-          "cpu": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0
-          }
-        }
       }
     }
   }

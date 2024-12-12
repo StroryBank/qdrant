@@ -114,6 +114,10 @@ impl DatabaseColumnScheduledDeleteWrapper {
     pub fn remove_column_family(&self) -> OperationResult<()> {
         self.db.remove_column_family()
     }
+
+    pub fn get_storage_size_bytes(&self) -> OperationResult<usize> {
+        self.db.get_storage_size_bytes()
+    }
 }
 
 pub struct LockedDatabaseColumnScheduledDeleteWrapper<'a> {
@@ -135,7 +139,7 @@ pub struct DatabaseColumnScheduledDeleteIterator<'a> {
     deleted_pending_persistence: &'a Mutex<HashSet<Vec<u8>>>,
 }
 
-impl<'a> Iterator for DatabaseColumnScheduledDeleteIterator<'a> {
+impl Iterator for DatabaseColumnScheduledDeleteIterator<'_> {
     type Item = (Box<[u8]>, Box<[u8]>);
 
     fn next(&mut self) -> Option<Self::Item> {

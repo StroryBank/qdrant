@@ -152,7 +152,7 @@ impl PayloadStorage for MmapPayloadStorage {
     fn flusher(&self) -> Flusher {
         let storage = self.storage.clone();
         Box::new(move || {
-            storage.write().flush().map_err(|err| {
+            storage.read().flush().map_err(|err| {
                 OperationError::service_error(format!(
                     "Failed to flush mmap payload storage: {err}"
                 ))
@@ -178,5 +178,9 @@ impl PayloadStorage for MmapPayloadStorage {
 
     fn files(&self) -> Vec<PathBuf> {
         self.storage.read().files()
+    }
+
+    fn get_storage_size_bytes(&self) -> OperationResult<usize> {
+        Ok(self.storage.read().get_storage_size_bytes())
     }
 }

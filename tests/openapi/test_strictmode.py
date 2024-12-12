@@ -1,4 +1,5 @@
 import pytest
+import random
 
 from .conftest import collection_name
 from .helpers.collection_setup import basic_collection_setup, drop_collection
@@ -370,3 +371,316 @@ def test_strict_mode_search_max_oversampling_validation(collection_name):
 
     assert "oversampling" in search_fail.json()['status']['error']
     assert not search_fail.ok
+
+
+def test_strict_mode_upsert_max_batch_size(collection_name):
+    def search_request():
+        return request_with_validation(
+            api='/collections/{collection_name}/points',
+            method="PUT",
+            path_params={'collection_name': collection_name},
+            body={
+                "batch": {
+                    "ids": [1, 2, 3, 4, 5, 6],
+                    "payloads": [{}, {}, {}, {}, {}, {}],
+                    "vectors": [
+                        [1, 2, 3, 5],
+                        [1, 2, 3, 5],
+                        [1, 2, 3, 5],
+                        [1, 2, 3, 5],
+                        [1, 2, 3, 5],
+                        [1, 2, 3, 5]
+                    ]
+                }
+            }
+        )
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 6,
+    })
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 5,
+    })
+
+    search_fail = search_request()
+
+    assert "upsert" in search_fail.json()['status']['error']
+    assert not search_fail.ok
+
+
+def test_strict_mode_update_many_upsert_max_batch_size(collection_name):
+    def search_request():
+        return request_with_validation(
+            api='/collections/{collection_name}/points/batch',
+            method="POST",
+            path_params={'collection_name': collection_name},
+            body={
+                "operations": [
+                    {
+                        "upsert": {
+                            "batch": {
+                                "ids": [1, 2, 3, 4, 5, 6],
+                                "payloads": [{}, {}, {}, {}, {}, {}],
+                                "vectors": [
+                                    [1, 2, 3, 5],
+                                    [1, 2, 3, 5],
+                                    [1, 2, 3, 5],
+                                    [1, 2, 3, 5],
+                                    [1, 2, 3, 5],
+                                    [1, 2, 3, 5]
+                                ]
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 6,
+    })
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 5,
+    })
+
+    search_fail = search_request()
+
+    assert "upsert" in search_fail.json()['status']['error']
+    assert not search_fail.ok
+
+
+def test_strict_mode_update_vectors_max_batch_size(collection_name):
+    def search_request():
+        return request_with_validation(
+            api='/collections/{collection_name}/points/vectors',
+            method="PUT",
+            path_params={'collection_name': collection_name},
+            body={
+                "points": [
+                    {
+                        "id": 1,
+                        "vector": [1, 2, 3, 5],
+                    },
+                    {
+                        "id": 2,
+                        "vector": [1, 2, 3, 5],
+                    },
+                    {
+                        "id": 3,
+                        "vector": [1, 2, 3, 5],
+                    },
+                    {
+                        "id": 4,
+                        "vector": [1, 2, 3, 5],
+                    },
+                ]
+            }
+        )
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 4,
+    })
+
+    search_request().raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "upsert_max_batchsize": 3,
+    })
+
+    search_fail = search_request()
+
+    assert "update limit" in search_fail.json()['status']['error']
+    assert not search_fail.ok
+
+
+def test_strict_mode_max_collection_size_upsert(collection_name):
+    basic_collection_setup(collection_name=collection_name)  # Clear collection to not depend on other tests
+
+    def upsert_points(ids: list[int]):
+        length = len(ids)
+        payloads = [{} for _ in range(length)]
+        vectors = [[1, 2, 3, 5] for _ in range(length)]
+        return request_with_validation(
+            api='/collections/{collection_name}/points',
+            method="PUT",
+            path_params={'collection_name': collection_name},
+            body={
+                "batch": {
+                    "ids": ids,
+                    "payloads": payloads,
+                    "vectors": vectors
+                }
+            }
+        )
+
+    # Overwriting the same points to trigger cache refreshing
+    for _ in range(32):
+        upsert_points([1, 2, 3, 4, 5]).raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "max_collection_vector_size_bytes": 240,
+    })
+
+    for _ in range(32):
+        upsert_points([6, 7, 8, 9, 10]).raise_for_status()
+
+    # Max limit has been reached and one of the next requests must fail. Due to cache it might not be the first call!
+    for _ in range(32):
+        failed_upsert = upsert_points([12, 13, 14, 15, 16])
+        if failed_upsert.ok:
+            continue
+        assert "Max vector storage size" in failed_upsert.json()['status']['error']
+        assert not failed_upsert.ok
+        return
+
+    assert False, "Upserting should have failed but didn't"
+
+
+def test_strict_mode_max_collection_size_upsert_batch(collection_name):
+    basic_collection_setup(collection_name=collection_name)  # Clear collection to not depend on other tests
+
+    def upsert_points(ids: list[int]):
+        length = len(ids)
+        payloads = [{} for _ in range(length)]
+        vectors = [[1, 2, 3, 5] for _ in range(length)]
+        return request_with_validation(
+            api='/collections/{collection_name}/points/batch',
+            method="POST",
+            path_params={'collection_name': collection_name},
+            body={
+                "operations": [
+                    {
+                        "upsert": {
+                            "batch": {
+                                "ids": ids,
+                                "payloads": payloads,
+                                "vectors": vectors
+                            }
+                        }
+                    }
+                ]
+            }
+        )
+
+    for _ in range(32):
+        upsert_points([1, 2, 3, 4, 5]).raise_for_status()
+
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "max_collection_vector_size_bytes": 240,
+    })
+
+    for _ in range(32):
+        upsert_points([6, 7, 8, 9, 10]).raise_for_status()
+
+    # Max limit has been reached and one of the next requests must fail. Due to cache it might not be the first call!
+    for _ in range(32):
+        failed_upsert = upsert_points([12, 13, 14, 15, 16])
+        if failed_upsert.ok:
+            continue
+        assert "Max vector storage size" in failed_upsert.json()['status']['error']
+        assert not failed_upsert.ok
+        return
+
+    assert False, "Upserting should have failed but didn't"
+
+
+def test_strict_mode_read_rate_limiting(collection_name):
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "read_rate_limit_per_sec": 1,
+    })
+
+    response = request_with_validation(
+        api='/collections/{collection_name}',
+        method="GET",
+        path_params={'collection_name': collection_name},
+    )
+
+    assert response.ok
+    new_strict_mode_config = response.json()['result']['config']['strict_mode_config']
+    assert new_strict_mode_config['enabled']
+    assert new_strict_mode_config['read_rate_limit_per_sec'] == 1
+
+    failed_count = 0
+
+    for _ in range(10):
+        response = request_with_validation(
+            api='/collections/{collection_name}/points/search',
+            method="POST",
+            path_params={'collection_name': collection_name},
+            body={
+                "vector": [0.2, 0.1, 0.9, 0.7],
+                "limit": 4
+            }
+        )
+        if not response.ok:
+            failed_count += 1
+            assert response.status_code == 429
+            assert "Rate limiting exceeded: Read rate limit exceeded, retry later" in response.json()['status']['error']
+
+    # loose check, as the rate limiting might not be exact
+    assert failed_count > 5, "Rate limiting did not work"
+
+
+def test_strict_mode_write_rate_limiting(collection_name):
+    set_strict_mode(collection_name, {
+        "enabled": True,
+        "write_rate_limit_per_sec": 1,
+    })
+
+    response = request_with_validation(
+        api='/collections/{collection_name}',
+        method="GET",
+        path_params={'collection_name': collection_name},
+    )
+
+    assert response.ok
+    new_strict_mode_config = response.json()['result']['config']['strict_mode_config']
+    assert new_strict_mode_config['enabled']
+    assert new_strict_mode_config['write_rate_limit_per_sec'] == 1
+
+    failed_count = 0
+
+    for _ in range(10):
+        response = request_with_validation(
+            api='/collections/{collection_name}/points',
+            method="PUT",
+            path_params={'collection_name': collection_name},
+            query_params={'wait': 'true'},
+            body={
+                "points": [
+                    {
+                        "id": 1,
+                        "vector": [0.05, 0.61, 0.76, 0.74],
+                    },
+                ]
+            }
+        )
+
+        if not response.ok:
+            failed_count += 1
+            assert response.status_code == 429
+            assert "Rate limiting exceeded: Write rate limit exceeded, retry later" in response.json()['status']['error']
+
+    # loose check, as the rate limiting might not be exact
+    assert failed_count > 5, "Rate limiting did not work"

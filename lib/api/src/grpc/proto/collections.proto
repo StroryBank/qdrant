@@ -237,7 +237,7 @@ message OptimizersConfigDiff {
   optional uint64 max_segment_size = 4;
   /*
   Maximum size (in kilobytes) of vectors to store in-memory per segment.
-  Segments larger than this threshold will be stored as read-only memmaped file.
+  Segments larger than this threshold will be stored as read-only memmapped file.
 
   Memmap storage is disabled by default, to enable it, set this threshold to a reasonable value.
 
@@ -320,6 +320,10 @@ message StrictModeConfig {
   optional uint32 search_max_hnsw_ef = 6;
   optional bool search_allow_exact  = 7;
   optional float search_max_oversampling  = 8;
+  optional uint64 upsert_max_batchsize  = 9;
+  optional uint64 max_collection_vector_size_bytes  = 10;
+  optional uint32 read_rate_limit_per_sec = 11;
+  optional uint32 write_rate_limit_per_sec = 12;
 }
 
 message CreateCollection {

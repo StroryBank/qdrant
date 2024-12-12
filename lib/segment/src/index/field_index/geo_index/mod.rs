@@ -467,7 +467,7 @@ impl PayloadFieldIndex for GeoMapIndex {
         }
     }
 
-    fn clear(self) -> OperationResult<()> {
+    fn cleanup(self) -> OperationResult<()> {
         match self {
             GeoMapIndex::Mutable(index) => index.db_wrapper().remove_column_family(),
             GeoMapIndex::Immutable(index) => index.db_wrapper().remove_column_family(),
@@ -530,7 +530,7 @@ impl PayloadFieldIndex for GeoMapIndex {
             let mut estimation = self.match_cardinality(&geo_hashes);
             estimation
                 .primary_clauses
-                .push(PrimaryCondition::Condition(condition.clone()));
+                .push(PrimaryCondition::Condition(Box::new(condition.clone())));
             return Some(estimation);
         }
 
@@ -539,7 +539,7 @@ impl PayloadFieldIndex for GeoMapIndex {
             let mut estimation = self.match_cardinality(&geo_hashes);
             estimation
                 .primary_clauses
-                .push(PrimaryCondition::Condition(condition.clone()));
+                .push(PrimaryCondition::Condition(Box::new(condition.clone())));
             return Some(estimation);
         }
 
@@ -565,7 +565,7 @@ impl PayloadFieldIndex for GeoMapIndex {
 
             exterior_estimation
                 .primary_clauses
-                .push(PrimaryCondition::Condition(condition.clone()));
+                .push(PrimaryCondition::Condition(Box::new(condition.clone())));
             return Some(exterior_estimation);
         }
 

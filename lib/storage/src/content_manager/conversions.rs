@@ -28,8 +28,9 @@ impl From<StorageError> for tonic::Status {
             StorageError::Forbidden { .. } => tonic::Code::PermissionDenied,
             StorageError::PreconditionFailed { .. } => tonic::Code::FailedPrecondition,
             StorageError::InferenceError { .. } => tonic::Code::InvalidArgument,
+            StorageError::RateLimitExceeded { .. } => tonic::Code::ResourceExhausted,
         };
-        tonic::Status::new(error_code, format!("{error}"))
+        Status::new(error_code, format!("{error}"))
     }
 }
 
@@ -84,6 +85,12 @@ pub fn strict_mode_from_api(value: api::grpc::qdrant::StrictModeConfig) -> Stric
         search_max_hnsw_ef: value.search_max_hnsw_ef.map(|i| i as usize),
         search_allow_exact: value.search_allow_exact,
         search_max_oversampling: value.search_max_oversampling.map(f64::from),
+        upsert_max_batchsize: value.upsert_max_batchsize.map(|i| i as usize),
+        max_collection_vector_size_bytes: value
+            .max_collection_vector_size_bytes
+            .map(|i| i as usize),
+        read_rate_limit_per_sec: value.write_rate_limit_per_sec.map(|i| i as usize),
+        write_rate_limit_per_sec: value.write_rate_limit_per_sec.map(|i| i as usize),
     }
 }
 

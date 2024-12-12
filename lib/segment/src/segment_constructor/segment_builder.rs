@@ -54,13 +54,13 @@ pub struct SegmentBuilder {
     temp_dir: TempDir,
     indexed_fields: HashMap<PayloadKeyType, PayloadFieldSchema>,
 
-    // Payload key to deframent data to
+    // Payload key to defragment data to
     defragment_keys: Vec<PayloadKeyType>,
 }
 
 impl SegmentBuilder {
     pub fn new(
-        segment_path: &Path,
+        segments_path: &Path,
         temp_dir: &Path,
         segment_config: &SegmentConfig,
     ) -> OperationResult<Self> {
@@ -79,7 +79,7 @@ impl SegmentBuilder {
         };
 
         let payload_storage =
-            create_payload_storage(database.clone(), segment_config, segment_path)?;
+            create_payload_storage(database.clone(), segment_config, temp_dir.path())?;
 
         let mut vector_storages = HashMap::new();
 
@@ -96,17 +96,21 @@ impl SegmentBuilder {
             vector_storages.insert(vector_name.to_owned(), vector_storage);
         }
 
-        #[allow(clippy::for_kv_map)]
-        for (vector_name, _sparse_vector_config) in &segment_config.sparse_vector_data {
-            // `_sparse_vector_config` should be used, once we are able to initialize storage with
-            // different datatypes
+        for (vector_name, sparse_vector_config) in &segment_config.sparse_vector_data {
+            let vector_storage_path = get_vector_storage_path(temp_dir.path(), vector_name);
 
-            let vector_storage =
-                create_sparse_vector_storage(database.clone(), vector_name, &stopped)?;
+            let vector_storage = create_sparse_vector_storage(
+                database.clone(),
+                &vector_storage_path,
+                vector_name,
+                &sparse_vector_config.storage_type,
+                &stopped,
+            )?;
+
             vector_storages.insert(vector_name.to_owned(), vector_storage);
         }
 
-        let destination_path = new_segment_path(segment_path);
+        let destination_path = new_segment_path(segments_path);
 
         Ok(SegmentBuilder {
             version: Default::default(), // default version is 0
@@ -212,7 +216,7 @@ impl SegmentBuilder {
                 }
                 FieldIndex::GeoIndex(_) => {}
                 FieldIndex::FullTextIndex(_) => {}
-                FieldIndex::BinaryIndex(_) => {}
+                FieldIndex::BoolIndex(_) => {}
             }
         }
         ordering
@@ -237,23 +241,22 @@ impl SegmentBuilder {
         for (segment_index, segment) in segments.iter().enumerate() {
             for external_id in segment.iter_points() {
                 let version = segment.point_version(external_id).unwrap_or(0);
+                let internal_id = segment.get_internal_id(external_id).unwrap();
                 merged_points
                     .entry(external_id)
                     .and_modify(|entry| {
                         if entry.version < version {
                             entry.segment_index = segment_index;
                             entry.version = version;
+                            entry.internal_id = internal_id;
                         }
                     })
-                    .or_insert_with(|| {
-                        let internal_id = segment.get_internal_id(external_id).unwrap();
-                        PositionedPointMetadata {
-                            segment_index,
-                            internal_id,
-                            external_id,
-                            version,
-                            ordering: 0,
-                        }
+                    .or_insert_with(|| PositionedPointMetadata {
+                        segment_index,
+                        internal_id,
+                        external_id,
+                        version,
+                        ordering: 0,
                     });
             }
         }
@@ -391,7 +394,11 @@ impl SegmentBuilder {
         Ok(true)
     }
 
-    pub fn build(self, permit: CpuPermit, stopped: &AtomicBool) -> Result<Segment, OperationError> {
+    pub fn build(
+        self,
+        mut permit: CpuPermit,
+        stopped: &AtomicBool,
+    ) -> Result<Segment, OperationError> {
         let (temp_dir, destination_path) = {
             let SegmentBuilder {
                 version,
@@ -426,9 +433,6 @@ impl SegmentBuilder {
             id_tracker.mapping_flusher()()?;
             id_tracker.versions_flusher()()?;
             let id_tracker_arc = Arc::new(AtomicRefCell::new(id_tracker));
-
-            // Arc permit to share it with each vector store
-            let permit = Arc::new(permit);
 
             let mut quantized_vectors = Self::update_quantization(
                 &segment_config,
@@ -486,6 +490,28 @@ impl SegmentBuilder {
             payload_index.flusher()()?;
             let payload_index_arc = Arc::new(AtomicRefCell::new(payload_index));
 
+            // Try to lock GPU device.
+            #[cfg(feature = "gpu")]
+            let gpu_devices_manager = crate::index::hnsw_index::gpu::GPU_DEVICES_MANAGER.read();
+            #[cfg(feature = "gpu")]
+            let gpu_device = gpu_devices_manager
+                .as_ref()
+                .map(|devices_manager| devices_manager.lock_device(stopped))
+                .transpose()?
+                .flatten();
+            #[cfg(not(feature = "gpu"))]
+            let gpu_device = None;
+
+            // If GPU is enabled, release all CPU cores except one.
+            if let Some(_gpu_device) = &gpu_device {
+                if permit.num_cpus > 1 {
+                    permit.release_count(permit.num_cpus - 1);
+                }
+            }
+
+            // Arc permit to share it with each vector store
+            let permit = Arc::new(permit);
+
             for (vector_name, vector_config) in &segment_config.vector_data {
                 let vector_storage_arc = vector_storages_arc.remove(vector_name).unwrap();
                 let vector_index_path = get_vector_index_path(temp_dir.path(), vector_name);
@@ -500,6 +526,7 @@ impl SegmentBuilder {
                     payload_index_arc.clone(),
                     quantized_vectors_arc,
                     Some(permit.clone()),
+                    gpu_device.as_ref(),
                     stopped,
                 )?;
             }

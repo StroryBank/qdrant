@@ -704,7 +704,7 @@ impl Consensus {
         Ok(())
     }
 
-    fn try_sync_local_state(&mut self) -> anyhow::Result<()> {
+    fn try_sync_local_state(&self) -> anyhow::Result<()> {
         if !self.node.has_ready() {
             // No updates to process
             let store = self.node.store();
@@ -1080,7 +1080,7 @@ impl RaftMessageBroker {
                 );
             };
 
-            match sender.send(message) {
+            match sender.send(message).map_err(|err| *err) {
                 Ok(()) => (),
 
                 Err(tokio::sync::mpsc::error::TrySendError::Full((_, message))) => {
@@ -1136,14 +1136,15 @@ struct RaftMessageSenderHandle {
 }
 
 impl RaftMessageSenderHandle {
-    #[allow(clippy::result_large_err)]
-    pub fn send(&mut self, message: RaftMessage) -> RaftMessageSenderResult<()> {
+    fn send(&mut self, message: RaftMessage) -> RaftMessageSenderResult<()> {
         if !is_heartbeat(&message) {
-            self.messages.try_send((self.index, message))?;
+            self.messages
+                .try_send((self.index, message))
+                .map_err(Box::new)?;
         } else {
             self.heartbeat.send((self.index, message)).map_err(
-                |tokio::sync::watch::error::SendError(message)| {
-                    tokio::sync::mpsc::error::TrySendError::Closed(message)
+                |watch::error::SendError(message)| {
+                    Box::new(tokio::sync::mpsc::error::TrySendError::Closed(message))
                 },
             )?;
         }
@@ -1155,7 +1156,7 @@ impl RaftMessageSenderHandle {
 }
 
 type RaftMessageSenderResult<T, E = RaftMessageSenderError> = Result<T, E>;
-type RaftMessageSenderError = tokio::sync::mpsc::error::TrySendError<(usize, RaftMessage)>;
+type RaftMessageSenderError = Box<tokio::sync::mpsc::error::TrySendError<(usize, RaftMessage)>>;
 
 struct RaftMessageSender {
     messages: Receiver<(usize, RaftMessage)>,
@@ -1241,7 +1242,7 @@ impl RaftMessageSender {
         }
     }
 
-    async fn send(&mut self, message: &RaftMessage) {
+    async fn send(&self, message: &RaftMessage) {
         if let Err(err) = self.try_send(message).await {
             let peer_id = message.to;
 
@@ -1253,7 +1254,7 @@ impl RaftMessageSender {
         }
     }
 
-    async fn try_send(&mut self, message: &RaftMessage) -> anyhow::Result<()> {
+    async fn try_send(&self, message: &RaftMessage) -> anyhow::Result<()> {
         let peer_id = message.to;
 
         let uri = self.uri(peer_id).await?;
@@ -1315,7 +1316,7 @@ impl RaftMessageSender {
         Ok(())
     }
 
-    async fn uri(&mut self, peer_id: PeerId) -> anyhow::Result<Uri> {
+    async fn uri(&self, peer_id: PeerId) -> anyhow::Result<Uri> {
         let uri = self
             .consensus_state
             .peer_address_by_id()
@@ -1328,7 +1329,7 @@ impl RaftMessageSender {
         }
     }
 
-    async fn who_is(&mut self, peer_id: PeerId) -> anyhow::Result<Uri> {
+    async fn who_is(&self, peer_id: PeerId) -> anyhow::Result<Uri> {
         let bootstrap_uri = self
             .bootstrap_uri
             .clone()

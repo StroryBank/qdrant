@@ -16,6 +16,9 @@ pub struct Device {
     /// Native Vulkan device handle.
     vk_device: ash::Device,
 
+    /// Hardware device name.
+    name: String,
+
     /// GPU memory allocator from `gpu-allocator` crate.
     /// It's an Option because of drop order. We need to drop it before the device.
     /// But `Allocator` is destroyed by it's own drop.
@@ -38,6 +41,9 @@ pub struct Device {
     /// Maximum work group size for compute shaders.
     /// It's used in bounds checking in Context.
     max_compute_work_group_count: [usize; 3],
+
+    /// Maximum GPU buffer size.
+    max_buffer_size: usize,
 
     /// Selected queue index to use.
     queue_index: usize,
@@ -82,15 +88,15 @@ impl Device {
                 .get_physical_device_queue_family_properties(vk_physical_device.vk_physical_device)
         };
 
-        let max_queue_priorities_count = vk_queue_families
+        let max_queue_priorities_counts: Vec<Vec<f32>> = vk_queue_families
             .iter()
-            .map(|vk_queue_family| vk_queue_family.queue_count as usize)
-            .max()
-            .ok_or_else(|| GpuError::Other("No queue families found".to_string()))?;
-        let queue_priorities = vec![0.; max_queue_priorities_count];
+            .map(|vk_queue_family| vec![0.; vk_queue_family.queue_count as usize])
+            .collect();
 
-        let queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = (0..vk_queue_families.len())
-            .map(|queue_family_index| {
+        let queue_create_infos: Vec<vk::DeviceQueueCreateInfo> = max_queue_priorities_counts
+            .iter()
+            .enumerate()
+            .map(|(queue_family_index, queue_priorities)| {
                 vk::DeviceQueueCreateInfo::default()
                     .flags(vk::DeviceQueueCreateFlags::empty())
                     .queue_family_index(queue_family_index as u32)
@@ -152,25 +158,31 @@ impl Device {
         let mut physical_device_features_1_3 = vk::PhysicalDeviceVulkan13Features::default();
 
         let max_compute_work_group_count;
+        let max_buffer_size;
         let mut is_dynamic_subgroup_size = false;
-        let subgroup_size = unsafe {
-            let props = instance
-                .vk_instance()
-                .get_physical_device_properties(vk_physical_device.vk_physical_device);
+        let subgroup_size = {
+            let props = unsafe {
+                instance
+                    .vk_instance()
+                    .get_physical_device_properties(vk_physical_device.vk_physical_device)
+            };
             max_compute_work_group_count = [
                 props.limits.max_compute_work_group_count[0] as usize,
                 props.limits.max_compute_work_group_count[1] as usize,
                 props.limits.max_compute_work_group_count[2] as usize,
             ];
+            max_buffer_size = props.limits.max_storage_buffer_range as usize;
             let mut subgroup_properties = vk::PhysicalDeviceSubgroupProperties::default();
             let mut vulkan_1_3_properties = vk::PhysicalDeviceVulkan13Properties::default();
             let mut props2 = vk::PhysicalDeviceProperties2::default()
                 .push_next(&mut subgroup_properties)
                 .push_next(&mut vulkan_1_3_properties);
-            instance.vk_instance().get_physical_device_properties2(
-                vk_physical_device.vk_physical_device,
-                &mut props2,
-            );
+            unsafe {
+                instance.vk_instance().get_physical_device_properties2(
+                    vk_physical_device.vk_physical_device,
+                    &mut props2,
+                );
+            }
 
             let subgroup_size = if vulkan_1_3_properties.min_subgroup_size
                 != vulkan_1_3_properties.max_subgroup_size
@@ -291,8 +303,10 @@ impl Device {
             _transfer_queues: transfer_queues,
             subgroup_size,
             max_compute_work_group_count,
+            max_buffer_size,
             is_dynamic_subgroup_size,
             queue_index,
+            name: vk_physical_device.name.clone(),
         }))
     }
 
@@ -349,8 +363,16 @@ impl Device {
         self.max_compute_work_group_count
     }
 
+    pub fn max_buffer_size(&self) -> usize {
+        self.max_buffer_size
+    }
+
     pub fn compute_queue(&self) -> &Queue {
         &self.compute_queues[self.queue_index % self.compute_queues.len()]
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     fn check_extensions_list(

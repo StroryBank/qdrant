@@ -471,7 +471,7 @@ impl<T: Encodable + Numericable + MmapValue + Default, P> NumericIndex<T, P> {
     delegate! {
         to self.inner {
             pub fn check_values_any(&self, idx: PointOffsetType, check_fn: impl Fn(&T) -> bool) -> bool;
-            pub fn clear(self) -> OperationResult<()>;
+            pub fn cleanup(self) -> OperationResult<()>;
             pub fn get_telemetry_data(&self) -> PayloadIndexTelemetry;
             pub fn load(&mut self) -> OperationResult<bool>;
             pub fn values_count(&self, idx: PointOffsetType) -> usize;
@@ -609,7 +609,7 @@ impl<T: Encodable + Numericable + MmapValue + Default> PayloadFieldIndex for Num
         NumericIndexInner::load(self)
     }
 
-    fn clear(self) -> OperationResult<()> {
+    fn cleanup(self) -> OperationResult<()> {
         match self {
             NumericIndexInner::Mutable(index) => index.get_db_wrapper().recreate_column_family(),
             NumericIndexInner::Immutable(index) => index.get_db_wrapper().recreate_column_family(),
@@ -679,8 +679,9 @@ impl<T: Encodable + Numericable + MmapValue + Default> PayloadFieldIndex for Num
 
                 let estimated_count = self.estimate_points(&key);
                 return Some(
-                    CardinalityEstimation::exact(estimated_count)
-                        .with_primary_clause(PrimaryCondition::Condition(condition.clone())),
+                    CardinalityEstimation::exact(estimated_count).with_primary_clause(
+                        PrimaryCondition::Condition(Box::new(condition.clone())),
+                    ),
                 );
             }
         }
@@ -689,7 +690,7 @@ impl<T: Encodable + Numericable + MmapValue + Default> PayloadFieldIndex for Num
             let mut cardinality = self.range_cardinality(range);
             cardinality
                 .primary_clauses
-                .push(PrimaryCondition::Condition(condition.clone()));
+                .push(PrimaryCondition::Condition(Box::new(condition.clone())));
             cardinality
         })
     }

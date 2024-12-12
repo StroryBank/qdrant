@@ -309,7 +309,7 @@ pub struct OptimizersConfigDiff {
     #[prost(uint64, optional, tag = "4")]
     pub max_segment_size: ::core::option::Option<u64>,
     /// Maximum size (in kilobytes) of vectors to store in-memory per segment.
-    /// Segments larger than this threshold will be stored as read-only memmaped file.
+    /// Segments larger than this threshold will be stored as read-only memmapped file.
     ///
     /// Memmap storage is disabled by default, to enable it, set this threshold to a reasonable value.
     ///
@@ -452,6 +452,14 @@ pub struct StrictModeConfig {
     pub search_allow_exact: ::core::option::Option<bool>,
     #[prost(float, optional, tag = "8")]
     pub search_max_oversampling: ::core::option::Option<f32>,
+    #[prost(uint64, optional, tag = "9")]
+    pub upsert_max_batchsize: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "10")]
+    pub max_collection_vector_size_bytes: ::core::option::Option<u64>,
+    #[prost(uint32, optional, tag = "11")]
+    pub read_rate_limit_per_sec: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "12")]
+    pub write_rate_limit_per_sec: ::core::option::Option<u32>,
 }
 #[derive(validator::Validate)]
 #[derive(serde::Serialize)]

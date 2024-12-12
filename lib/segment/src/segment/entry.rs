@@ -375,6 +375,10 @@ impl SegmentEntry for Segment {
         self.id_tracker.borrow().internal_id(point_id).is_some()
     }
 
+    fn is_empty(&self) -> bool {
+        self.id_tracker.borrow().total_point_count() == 0
+    }
+
     fn available_point_count(&self) -> usize {
         self.id_tracker.borrow().available_point_count()
     }
@@ -430,17 +434,7 @@ impl SegmentEntry for Segment {
         self.segment_type
     }
 
-    fn info(&self) -> SegmentInfo {
-        let payload_index = self.payload_index.borrow();
-        let schema = payload_index
-            .indexed_fields()
-            .into_iter()
-            .map(|(key, index_schema)| {
-                let points_count = payload_index.indexed_points(&key);
-                (key, PayloadIndexInfo::new(index_schema, points_count))
-            })
-            .collect();
-
+    fn size_info(&self) -> SegmentInfo {
         let num_vectors = self
             .vector_data
             .values()
@@ -491,19 +485,44 @@ impl SegmentEntry for Segment {
 
         let vectors_size_bytes = total_average_vectors_size_bytes * num_points;
 
+        // Unwrap and default to 0 here because the RocksDB storage is the only faillible one, and we will remove it eventually.
+        let payloads_size_bytes = self
+            .payload_storage
+            .borrow()
+            .get_storage_size_bytes()
+            .unwrap_or(0);
+
         SegmentInfo {
             segment_type: self.segment_type,
             num_vectors,
             num_indexed_vectors,
             num_points: self.available_point_count(),
             num_deleted_vectors: self.deleted_point_count(),
-            vectors_size_bytes, // Considers vector storage, but not payload or indices
-            ram_usage_bytes: 0, // ToDo: Implement
+            vectors_size_bytes,  // Considers vector storage, but not indices
+            payloads_size_bytes, // Considers payload storage, but not indices
+            ram_usage_bytes: 0,  // ToDo: Implement
             disk_usage_bytes: 0, // ToDo: Implement
             is_appendable: self.appendable_flag,
-            index_schema: schema,
+            index_schema: HashMap::new(),
             vector_data: vector_data_info,
         }
+    }
+
+    fn info(&self) -> SegmentInfo {
+        let payload_index = self.payload_index.borrow();
+        let schema = payload_index
+            .indexed_fields()
+            .into_iter()
+            .map(|(key, index_schema)| {
+                let points_count = payload_index.indexed_points(&key);
+                (key, PayloadIndexInfo::new(index_schema, points_count))
+            })
+            .collect();
+
+        let mut info = self.size_info();
+        info.index_schema = schema;
+
+        info
     }
 
     fn config(&self) -> &SegmentConfig {

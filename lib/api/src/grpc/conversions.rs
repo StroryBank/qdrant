@@ -1631,6 +1631,12 @@ impl From<StrictModeConfig> for segment::types::StrictModeConfig {
             search_max_hnsw_ef: value.search_max_hnsw_ef.map(|i| i as usize),
             search_allow_exact: value.search_allow_exact,
             search_max_oversampling: value.search_max_oversampling.map(f64::from),
+            upsert_max_batchsize: value.upsert_max_batchsize.map(|i| i as usize),
+            max_collection_vector_size_bytes: value
+                .max_collection_vector_size_bytes
+                .map(|i| i as usize),
+            read_rate_limit_per_sec: value.read_rate_limit_per_sec.map(|i| i as usize),
+            write_rate_limit_per_sec: value.write_rate_limit_per_sec.map(|i| i as usize),
         }
     }
 }
@@ -1646,6 +1652,12 @@ impl From<segment::types::StrictModeConfig> for StrictModeConfig {
             search_max_hnsw_ef: value.search_max_hnsw_ef.map(|i| i as u32),
             search_allow_exact: value.search_allow_exact,
             search_max_oversampling: value.search_max_oversampling.map(|i| i as f32),
+            upsert_max_batchsize: value.upsert_max_batchsize.map(|i| i as u64),
+            max_collection_vector_size_bytes: value
+                .max_collection_vector_size_bytes
+                .map(|i| i as u64),
+            read_rate_limit_per_sec: value.read_rate_limit_per_sec.map(|i| i as u32),
+            write_rate_limit_per_sec: value.write_rate_limit_per_sec.map(|i| i as u32),
         }
     }
 }
@@ -1707,8 +1719,10 @@ pub fn into_named_vector_struct(
         Some(indices) => NamedVectorStruct::Sparse(NamedSparseVector {
             name: vector_name
                 .ok_or_else(|| Status::invalid_argument("Sparse vector must have a name"))?,
-            vector: SparseVector::new(indices.data, vector).map_err(|_| {
-                Status::invalid_argument("Sparse indices does not match sparse vector conditions")
+            vector: SparseVector::new(indices.data, vector).map_err(|e| {
+                Status::invalid_argument(format!(
+                    "Sparse indices does not match sparse vector conditions: {e}"
+                ))
             })?,
         }),
         None => {
@@ -1955,10 +1969,10 @@ impl TryFrom<SearchPointGroups> for rest::SearchGroupsRequestInternal {
 
         if let Some(sparse_indices) = &search_points.sparse_indices {
             validate_sparse_vector_impl(&sparse_indices.data, &search_points.vector).map_err(
-                |_| {
-                    Status::invalid_argument(
-                        "Sparse indices does not match sparse vector conditions",
-                    )
+                |e| {
+                    Status::invalid_argument(format!(
+                        "Sparse indices does not match sparse vector conditions: {e}"
+                    ))
                 },
             )?;
         }

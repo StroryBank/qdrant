@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use common::counter::hardware_counter::HardwareCounterCell;
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ impl<TStorage: EncodedStorage> EncodedVectorsU8<TStorage> {
         mut storage_builder: impl EncodedStorageBuilder<TStorage>,
         vector_parameters: &VectorParameters,
         quantile: Option<f32>,
-        stop_condition: impl Fn() -> bool,
+        stopped: &AtomicBool,
     ) -> Result<Self, EncodingError> {
         let actual_dim = Self::get_actual_dim(vector_parameters);
 
@@ -72,7 +73,7 @@ impl<TStorage: EncodedStorage> EncodedVectorsU8<TStorage> {
         };
 
         for vector in orig_data {
-            if stop_condition() {
+            if stopped.load(Ordering::Relaxed) {
                 return Err(EncodingError::Stopped);
             }
 
@@ -250,13 +251,38 @@ impl<TStorage: EncodedStorage> EncodedVectorsU8<TStorage> {
         }
     }
 
+    pub fn get_quantized_vector(&self, i: u32) -> (f32, &[u8]) {
+        let (offset, v_ptr) = self.get_vec_ptr(i);
+        let vector_data_size = self.metadata.actual_dim;
+        (offset, unsafe {
+            std::slice::from_raw_parts(v_ptr, vector_data_size)
+        })
+    }
+
     pub fn get_quantized_vector_size(vector_parameters: &VectorParameters) -> usize {
         let actual_dim = Self::get_actual_dim(vector_parameters);
         actual_dim + std::mem::size_of::<f32>()
     }
 
+    pub fn get_multiplier(&self) -> f32 {
+        self.metadata.multiplier
+    }
+
+    pub fn get_diff(&self) -> f32 {
+        let diff = self.metadata.actual_dim as f32 * self.metadata.offset * self.metadata.offset;
+        if self.metadata.vector_parameters.invert {
+            -diff
+        } else {
+            diff
+        }
+    }
+
     pub fn get_actual_dim(vector_parameters: &VectorParameters) -> usize {
         vector_parameters.dim + (ALIGNMENT - vector_parameters.dim % ALIGNMENT) % ALIGNMENT
+    }
+
+    pub fn vectors_count(&self) -> usize {
+        self.metadata.vector_parameters.count
     }
 }
 

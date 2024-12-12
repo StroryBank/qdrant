@@ -47,11 +47,10 @@ impl<
         let query = query
             .transform(|vector| {
                 dim = vector.dim;
-                let slices = vector.multi_vectors();
-                let preprocessed: DenseVector = slices
-                    .into_iter()
-                    .flat_map(|slice| TMetric::preprocess(slice.to_vec()))
-                    .collect();
+                let mut preprocessed = DenseVector::new();
+                for slice in vector.multi_vectors() {
+                    preprocessed.extend_from_slice(&TMetric::preprocess(slice.to_vec()));
+                }
                 let preprocessed = MultiDenseVectorInternal::new(preprocessed, vector.dim);
                 let converted =
                     TElement::from_float_multivector(CowMultiVector::Owned(preprocessed))
@@ -73,13 +72,12 @@ impl<
 }
 
 impl<
-        'a,
         TElement: PrimitiveVectorElement,
         TMetric: Metric<TElement>,
         TVectorStorage: MultiVectorStorage<TElement>,
         TQuery: Query<TypedMultiDenseVector<TElement>>,
         TInputQuery: Query<MultiDenseVectorInternal>,
-    > MultiCustomQueryScorer<'a, TElement, TMetric, TVectorStorage, TQuery, TInputQuery>
+    > MultiCustomQueryScorer<'_, TElement, TMetric, TVectorStorage, TQuery, TInputQuery>
 {
     fn hardware_counter_finalized(&self) -> HardwareCounterCell {
         let mut counter = self.hardware_counter.take();
@@ -111,14 +109,13 @@ impl<
 }
 
 impl<
-        'a,
         TElement: PrimitiveVectorElement,
         TMetric: Metric<TElement>,
         TVectorStorage: MultiVectorStorage<TElement>,
         TQuery: Query<TypedMultiDenseVector<TElement>>,
         TInputQuery: Query<MultiDenseVectorInternal>,
     > QueryScorer<TypedMultiDenseVector<TElement>>
-    for MultiCustomQueryScorer<'a, TElement, TMetric, TVectorStorage, TQuery, TInputQuery>
+    for MultiCustomQueryScorer<'_, TElement, TMetric, TVectorStorage, TQuery, TInputQuery>
 {
     #[inline]
     fn score_stored(&self, idx: PointOffsetType) -> ScoreType {

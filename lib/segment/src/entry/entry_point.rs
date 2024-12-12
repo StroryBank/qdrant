@@ -174,6 +174,15 @@ pub trait SegmentEntry {
 
     fn vector_names(&self) -> HashSet<String>;
 
+    /// Whether this segment is completely empty in terms of points
+    ///
+    /// The segment is considered to not be empty if it contains any points, even if deleted.
+    /// Deleted points still have a version which may be important at time of recovery. Deciding
+    /// this by just the reported point count is not reliable in case a proxy segment is used.
+    ///
+    /// Payload indices or type of storage are not considered here.
+    fn is_empty(&self) -> bool;
+
     /// Number of available points
     ///
     /// - excludes soft deleted points
@@ -199,6 +208,10 @@ pub trait SegmentEntry {
 
     /// Get current stats of the segment
     fn info(&self) -> SegmentInfo;
+
+    /// Get size related stats of the segment.
+    /// This returns `SegmentInfo` with some non size-related data (like `schema`) unset to improve performance.
+    fn size_info(&self) -> SegmentInfo;
 
     /// Get segment configuration
     fn config(&self) -> &SegmentConfig;
